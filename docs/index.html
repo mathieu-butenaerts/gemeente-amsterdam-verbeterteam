@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>camt.053 naar PDF</title>
+<style>
+  :root {
+    --brand: #1F3A5F;
+    --bg: #F5F7FA;
+    --card: #FFFFFF;
+    --text: #1C2430;
+    --muted: #5B6676;
+    --line: #D5DCE5;
+    --ok: #1B7F3B;
+    --warn: #B00020;
+    --drop: #EEF2F7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand: #8FB3E3;
+      --bg: #12161C;
+      --card: #1B2129;
+      --text: #E4E9EF;
+      --muted: #9AA6B5;
+      --line: #2E3744;
+      --ok: #5FC27E;
+      --warn: #FF6B7F;
+      --drop: #212935;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { color: var(--brand); font-size: 26px; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  #drop {
+    border: 2px dashed var(--line); border-radius: 8px; background: var(--drop);
+    padding: 36px 16px; text-align: center; cursor: pointer; transition: border-color .15s;
+  }
+  #drop.over, #drop:hover, #drop:focus-visible { border-color: var(--brand); outline: none; }
+  #drop strong { color: var(--brand); }
+  #drop small { display: block; color: var(--muted); margin-top: 6px; }
+  .options { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 16px; align-items: center; }
+  .options label { display: inline-flex; gap: 6px; align-items: center; }
+  select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); }
+  .privacy { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  #results { margin-top: 20px; display: none; }
+  #results h2 { font-size: 17px; margin: 0 0 10px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; gap: 12px; align-items: center; justify-content: space-between;
+       padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  li:first-child { border-top: 0; }
+  .name { font-weight: 600; word-break: break-all; }
+  .meta { font-size: 13px; color: var(--muted); }
+  .meta .ok { color: var(--ok); }
+  .meta .warn, .error { color: var(--warn); font-weight: 600; }
+  button, a.btn {
+    font: inherit; font-size: 14px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--brand); color: var(--card); padding: 6px 14px; text-decoration: none; white-space: nowrap;
+  }
+  button.secondary { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
+  .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  footer { margin-top: 28px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>camt.053 naar PDF</h1>
+  <p class="lead">Zet camt.053-bankafschriften (XML) om naar overzichtelijke PDF-rekeningafschriften.</p>
+
+  <div class="card">
+    <div id="drop" tabindex="0" role="button" aria-label="Bestanden kiezen">
+      <strong>Sleep camt.053-bestanden hierheen</strong> of klik om te kiezen
+      <small>.xml-bestanden, meerdere tegelijk mogelijk</small>
+    </div>
+    <input id="file" type="file" accept=".xml,.053,text/xml,application/xml" multiple hidden>
+
+    <div class="options">
+      <label>Taal PDF
+        <select id="lang">
+          <option value="nl">Nederlands</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <label>Oriëntatie
+        <select id="orientation">
+          <option value="portrait">Staand</option>
+          <option value="landscape">Liggend</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="split"> Eén PDF per afschrift</label>
+    </div>
+
+    <p class="privacy">🔒 Je bestanden blijven op je eigen computer: de omzetting gebeurt volledig in je browser
+      en er wordt niets geüpload.</p>
+  </div>
+
+  <div id="results" class="card">
+    <h2>Resultaat</h2>
+    <ul id="list"></ul>
+    <div class="actions">
+      <button id="zip">Alles downloaden (.zip)</button>
+      <button id="clear" class="secondary">Wissen</button>
+    </div>
+  </div>
+
+  <footer>Ondersteunt camt.053.001.02 t/m .13. Controleert of beginsaldo + mutaties gelijk is aan het eindsaldo.</footer>
+</main>
+
+<script src="vendor/pdfmake.min.js"></script>
+<script src="vendor/vfs_fonts.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script>
+"use strict";
+
+// ------------------------------------------------------------------------- //
+// Labels (kept in sync with camt053_to_pdf.py)
+// ------------------------------------------------------------------------- //
+
+const LABELS = {
+  nl: {
+    title: "Rekeningafschrift", statement_id: "Afschrift-ID", sequence: "Volgnummer",
+    created: "Aangemaakt", period: "Periode", account: "Rekening", currency: "Valuta",
+    owner: "Rekeninghouder", bank: "Bank (BIC)", balances: "Saldi", balance_type: "Type",
+    date: "Datum", amount: "Bedrag", entries: "Transacties", booking_date: "Boekdatum",
+    value_date: "Valutadatum", counterparty: "Tegenpartij", description: "Omschrijving",
+    debit: "Af", credit: "Bij", summary: "Samenvatting", n_credit: "Aantal bijschrijvingen",
+    n_debit: "Aantal afschrijvingen", sum_credit: "Totaal bij", sum_debit: "Totaal af",
+    no_entries: "Geen transacties in deze periode.",
+    reconcile_ok: "Beginsaldo + mutaties = eindsaldo (gecontroleerd).",
+    reconcile_fail: "LET OP: beginsaldo + mutaties ({calc}) wijkt af van eindsaldo ({closing}).",
+    page: "Pagina", generated: "Gegenereerd uit", reversal: "storno",
+    bal: {
+      OPBD: "Beginsaldo", CLBD: "Eindsaldo", CLAV: "Beschikbaar saldo", PRCD: "Vorig eindsaldo",
+      ITBD: "Tussentijds saldo", FWAV: "Toekomstig beschikbaar", OPAV: "Beschikbaar beginsaldo",
+      ITAV: "Tussentijds beschikbaar", XPCD: "Verwacht saldo", INFO: "Informatief saldo",
+    },
+  },
+  en: {
+    title: "Bank statement", statement_id: "Statement ID", sequence: "Sequence no.",
+    created: "Created", period: "Period", account: "Account", currency: "Currency",
+    owner: "Account holder", bank: "Bank (BIC)", balances: "Balances", balance_type: "Type",
+    date: "Date", amount: "Amount", entries: "Entries", booking_date: "Booking date",
+    value_date: "Value date", counterparty: "Counterparty", description: "Description",
+    debit: "Debit", credit: "Credit", summary: "Summary", n_credit: "Number of credits",
+    n_debit: "Number of debits", sum_credit: "Total credits", sum_debit: "Total debits",
+    no_entries: "No entries in this period.",
+    reconcile_ok: "Opening balance + entries = closing balance (verified).",
+    reconcile_fail: "WARNING: opening balance + entries ({calc}) differs from closing balance ({closing}).",
+    page: "Page", generated: "Generated from", reversal: "reversal",
+    bal: {
+      OPBD: "Opening booked", CLBD: "Closing booked", CLAV: "Closing available", PRCD: "Previously closed",
+      ITBD: "Interim booked", FWAV: "Forward available", OPAV: "Opening available",
+      ITAV: "Interim available", XPCD: "Expected", INFO: "Information",
+    },
+  },
+};
+
+// ------------------------------------------------------------------------- //
+// Exact amounts: BigInt scaled by 10^5 (ISO 20022 allows up to 5 decimals)
+// ------------------------------------------------------------------------- //
+
+const SCALE = 100000n;
+
+function toAmount(s) {
+  const m = /^\s*(-?)(\d*)(?:\.(\d{0,5}))?\s*$/.exec(s || "");
+  if (!m) return 0n;
+  const v = BigInt(m[2] || "0") * SCALE + BigInt((m[3] || "").padEnd(5, "0"));
+  return m[1] ? -v : v;
+}
+
+function fmtAmount(v, lang) {
+  if (v === null || v === undefined) return "";
+  const neg = v < 0n;
+  let cents = ((neg ? -v : v) + 500n) / 1000n; // round half up to 2 decimals
+  const int = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, lang === "nl" ? "." : ",");
+  const frac = (cents % 100n).toString().padStart(2, "0");
+  return (neg ? "-" : "") + int + (lang === "nl" ? "," : ".") + frac;
+}
+
+function fmtDate(s, lang) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+  if (!m) return s || "";
+  return lang === "nl" ? `${m[3]}-${m[2]}-${m[1]}` : `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+function fmtDateTime(s, lang) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(s || "");
+  return m ? `${fmtDate(m[1], lang)} ${m[2]}` : (s || "");
+}
+
+// ------------------------------------------------------------------------- //
+// Parsing (namespace-agnostic: match on local element names)
+// ------------------------------------------------------------------------- //
+
+function children(el, name) {
+  return el ? Array.from(el.children).filter(c => c.localName === name) : [];
+}
+
+function findAll(el, path) {
+  let nodes = el ? [el] : [];
+  for (const part of path.split("/")) nodes = nodes.flatMap(n => children(n, part));
+  return nodes;
+}
+
+function find(el, path) {
+  return findAll(el, path)[0] || null;
+}
+
+function text(el, ...paths) {
+  if (!el) return "";
+  for (const p of paths) {
+    const n = p ? find(el, p) : el;
+    const t = n && n.textContent.trim();
+    if (t) return t;
+  }
+  return "";
+}
+
+const parseDate = el => text(el, "Dt", "DtTm").slice(0, 10);
+const parseParty = el => text(el, "Pty/Nm", "Nm"); // v08+ wraps the party in <Pty>
+const parseAccount = el => text(el, "Id/IBAN", "Id/Othr/Id");
+
+function parseEntry(ntry) {
+  const amt = find(ntry, "Amt");
+  const isCredit = text(ntry, "CdtDbtInd") === "CRDT";
+  const e = {
+    amount: toAmount(amt ? amt.textContent : "0"),
+    currency: amt ? amt.getAttribute("Ccy") || "" : "",
+    isCredit,
+    reversal: text(ntry, "RvslInd").toLowerCase() === "true",
+    status: text(ntry, "Sts/Cd", "Sts/Prtry", "Sts"),
+    bookingDate: parseDate(find(ntry, "BookgDt")),
+    valueDate: parseDate(find(ntry, "ValDt")),
+  };
+
+  const codes = ["BkTxCd/Domn/Cd", "BkTxCd/Domn/Fmly/Cd", "BkTxCd/Domn/Fmly/SubFmlyCd"]
+    .map(p => text(ntry, p)).filter(Boolean);
+  e.bankTxCode = codes.join("-") || text(ntry, "BkTxCd/Prtry/Cd");
+
+  const descriptions = [], refs = [], names = [], accounts = [];
+  const acctRef = text(ntry, "AcctSvcrRef");
+  if (acctRef) refs.push(acctRef);
+
+  // The counterparty is the debtor on a credit and the creditor on a debit.
+  const other = isCredit ? "Dbtr" : "Cdtr";
+  for (const tx of findAll(ntry, "NtryDtls/TxDtls")) {
+    const name = parseParty(find(tx, `RltdPties/${other}`)) || parseParty(find(tx, `RltdPties/Ultmt${other}`));
+    const acct = parseAccount(find(tx, `RltdPties/${other}Acct`));
+    if (name && !names.includes(name)) names.push(name);
+    if (acct && !accounts.includes(acct)) accounts.push(acct);
+
+    for (const u of findAll(tx, "RmtInf/Ustrd")) if (u.textContent.trim()) descriptions.push(u.textContent.trim());
+    for (const s of findAll(tx, "RmtInf/Strd")) {
+      const cref = text(s, "CdtrRefInf/Ref");
+      if (cref) descriptions.push(cref);
+      for (const a of children(s, "AddtlRmtInf")) if (a.textContent.trim()) descriptions.push(a.textContent.trim());
+    }
+    const addtl = text(tx, "AddtlTxInf");
+    if (addtl) descriptions.push(addtl);
+
+    const e2e = text(tx, "Refs/EndToEndId");
+    if (e2e && e2e.toUpperCase() !== "NOTPROVIDED") refs.push(`E2E ${e2e}`);
+  }
+  const addtlNtry = text(ntry, "AddtlNtryInf");
+  if (addtlNtry && !descriptions.includes(addtlNtry)) descriptions.push(addtlNtry);
+
+  e.counterpartyName = names.join("; ");
+  e.counterpartyAccount = accounts.join("; ");
+  e.description = [...new Set(descriptions)].join(" / ");
+  e.references = refs;
+  return e;
+}
+
+function parseStatement(stmt) {
+  const acct = find(stmt, "Acct");
+  const balances = findAll(stmt, "Bal").map(bal => {
+    const amt = find(bal, "Amt");
+    let v = toAmount(amt ? amt.textContent : "0");
+    if (text(bal, "CdtDbtInd") === "DBIT") v = -v;
+    return {
+      code: text(bal, "Tp/CdOrPrtry/Cd", "Tp/CdOrPrtry/Prtry"),
+      amount: v,
+      currency: amt ? amt.getAttribute("Ccy") || "" : "",
+      date: parseDate(find(bal, "Dt")),
+    };
+  });
+
+  const s = {
+    id: text(stmt, "Id"),
+    sequence: text(stmt, "ElctrncSeqNb", "LglSeqNb"),
+    created: text(stmt, "CreDtTm"),
+    periodFrom: text(stmt, "FrToDt/FrDtTm").slice(0, 10),
+    periodTo: text(stmt, "FrToDt/ToDtTm").slice(0, 10),
+    iban: parseAccount(acct),
+    currency: text(acct, "Ccy"),
+    owner: text(acct, "Ownr/Nm"),
+    bic: text(acct, "Svcr/FinInstnId/BICFI", "Svcr/FinInstnId/BIC"),
+    balances,
+    entries: findAll(stmt, "Ntry").map(parseEntry),
+    nCredit: "", nDebit: "", sumCredit: null, sumDebit: null,
+  };
+  const sum = find(stmt, "TxsSummry");
+  if (sum) {
+    s.nCredit = text(sum, "TtlCdtNtries/NbOfNtries");
+    s.nDebit = text(sum, "TtlDbtNtries/NbOfNtries");
+    if (text(sum, "TtlCdtNtries/Sum")) s.sumCredit = toAmount(text(sum, "TtlCdtNtries/Sum"));
+    if (text(sum, "TtlDbtNtries/Sum")) s.sumDebit = toAmount(text(sum, "TtlDbtNtries/Sum"));
+  }
+  return s;
+}
+
+function parseXml(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("Geen geldig XML-bestand.");
+  const stmts = Array.from(doc.getElementsByTagNameNS("*", "Stmt"));
+  if (!stmts.length) throw new Error("Geen <Stmt> gevonden – is dit een camt.053-bestand?");
+  return stmts.map(parseStatement);
+}
+
+function reconcile(s) {
+  const credits = s.entries.filter(e => e.isCredit).reduce((a, e) => a + e.amount, 0n);
+  const debits = s.entries.filter(e => !e.isCredit).reduce((a, e) => a + e.amount, 0n);
+  const bal = Object.fromEntries(s.balances.map(b => [b.code, b.amount]));
+  const opening = bal.OPBD ?? bal.PRCD;
+  const closing = bal.CLBD;
+  const result = { credits, debits, checked: false, ok: true, calc: null, closing: null };
+  if (opening !== undefined && closing !== undefined) {
+    result.checked = true;
+    result.calc = opening + credits - debits;
+    result.closing = closing;
+    result.ok = result.calc === closing;
+  }
+  return result;
+}
+
+// ------------------------------------------------------------------------- //
+// PDF rendering (pdfmake)
+// ------------------------------------------------------------------------- //
+
+const BRAND = "#1F3A5F", LIGHT = "#EEF2F7", GRID = "#C9D2DE", GREY = "#555555";
+
+function gridLayout(zebra) {
+  return {
+    hLineWidth: () => 0.25,
+    vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length ? 0.5 : 0),
+    hLineColor: () => GRID,
+    vLineColor: () => GRID,
+    fillColor: row => (row === 0 ? BRAND : zebra && row % 2 === 0 ? LIGHT : null),
+    paddingLeft: () => 4, paddingRight: () => 4, paddingTop: () => 3, paddingBottom: () => 3,
+  };
+}
+
+const hdr = (t, right) => ({ text: t, bold: true, color: "white", alignment: right ? "right" : "left" });
+const num = t => ({ text: t, alignment: "right" });
+
+function kvTable(rows, widths) {
+  return {
+    table: {
+      widths,
+      body: rows.filter(([, v]) => v).map(([k, v]) => [
+        { text: k, bold: true, color: GREY, fontSize: 7.5 },
+        { text: v, fontSize: 8.5 },
+      ]),
+    },
+    layout: { defaultBorder: false, paddingLeft: () => 0, paddingTop: () => 1, paddingBottom: () => 1 },
+  };
+}
+
+function statementContent(s, L, lang) {
+  const ccy = s.currency || (s.balances[0] && s.balances[0].currency) || "";
+  const out = [];
+
+  out.push({ text: L.title, style: "title" });
+  const period = [fmtDate(s.periodFrom, lang), fmtDate(s.periodTo, lang)].filter(Boolean).join(" – ");
+  out.push({
+    columns: [
+      kvTable([[L.account, s.iban], [L.currency, ccy], [L.owner, s.owner], [L.bank, s.bic]], [90, "*"]),
+      kvTable([[L.statement_id, s.id], [L.sequence, s.sequence], [L.period, period],
+               [L.created, fmtDateTime(s.created, lang)]], [80, "*"]),
+    ],
+    margin: [0, 0, 0, 10],
+  });
+
+  if (s.balances.length) {
+    out.push({ text: L.balances, style: "h2" });
+    out.push({
+      table: {
+        widths: [200, 85, 113],
+        body: [
+          [hdr(L.balance_type), hdr(L.date), hdr(`${L.amount} (${ccy})`, true)],
+          ...s.balances.map(b => [`${L.bal[b.code] || b.code} (${b.code})`, fmtDate(b.date, lang),
+                                  num(fmtAmount(b.amount, lang))]),
+        ],
+      },
+      layout: gridLayout(false),
+    });
+  }
+
+  out.push({ text: `${L.entries} (${s.entries.length})`, style: "h2" });
+  if (!s.entries.length) {
+    out.push({ text: L.no_entries, fontSize: 8.5 });
+  } else {
+    const body = [[hdr(L.booking_date), hdr(L.value_date), hdr(L.counterparty), hdr(L.description),
+                   hdr(L.debit, true), hdr(L.credit, true)]];
+    for (const e of s.entries) {
+      const cp = [{ text: e.counterpartyName }];
+      if (e.counterpartyAccount) cp.push({ text: e.counterpartyAccount, style: "small" });
+      const meta = [...e.references];
+      if (e.bankTxCode) meta.push(e.bankTxCode);
+      if (e.status && e.status !== "BOOK") meta.push(e.status);
+      if (e.reversal) meta.push(L.reversal);
+      const desc = [{ text: e.description }];
+      if (meta.length) desc.push({ text: meta.join(" · "), style: "small" });
+      const amt = fmtAmount(e.amount, lang);
+      body.push([fmtDate(e.bookingDate, lang), fmtDate(e.valueDate, lang), { stack: cp }, { stack: desc },
+                 num(e.isCredit ? "" : amt), num(e.isCredit ? amt : "")]);
+    }
+    out.push({
+      table: { headerRows: 1, dontBreakRows: true, widths: [58, 60, 125, "*", 60, 60], body },
+      layout: gridLayout(true),
+    });
+  }
+
+  const r = reconcile(s);
+  const nCr = s.nCredit || String(s.entries.filter(e => e.isCredit).length);
+  const nDb = s.nDebit || String(s.entries.filter(e => !e.isCredit).length);
+  const summary = [
+    { text: L.summary, style: "h2" },
+    kvTable([
+      [L.n_credit, nCr],
+      [L.sum_credit, `${ccy} ${fmtAmount(s.sumCredit ?? r.credits, lang)}`],
+      [L.n_debit, nDb],
+      [L.sum_debit, `${ccy} ${fmtAmount(s.sumDebit ?? r.debits, lang)}`],
+    ], [130, 170]),
+  ];
+  if (r.checked) {
+    summary.push(r.ok
+      ? { text: L.reconcile_ok, color: "#1B7F3B", fontSize: 8, margin: [0, 6, 0, 0] }
+      : { text: L.reconcile_fail.replace("{calc}", fmtAmount(r.calc, lang))
+                                 .replace("{closing}", fmtAmount(r.closing, lang)),
+          color: "#B00020", bold: true, fontSize: 8, margin: [0, 6, 0, 0] });
+  }
+  out.push({ stack: summary, unbreakable: true });
+  return out;
+}
+
+function buildPdf(statements, sourceName, lang, orientation) {
+  const L = LABELS[lang];
+  const content = [];
+  statements.forEach((s, i) => {
+    const part = statementContent(s, L, lang);
+    if (i) part[0].pageBreak = "before";
+    content.push(...part);
+  });
+  return pdfMake.createPdf({
+    pageSize: "A4",
+    pageOrientation: orientation,
+    pageMargins: [40, 40, 40, 46],
+    info: { title: `${L.title} ${statements[0].iban}`.trim(), author: "camt053_to_pdf" },
+    defaultStyle: { fontSize: 7.5, lineHeight: 1.1 },
+    styles: {
+      title: { fontSize: 16, bold: true, color: BRAND, margin: [0, 0, 0, 6] },
+      h2: { fontSize: 11, bold: true, color: BRAND, margin: [0, 10, 0, 4] },
+      small: { fontSize: 6.5, color: GREY, margin: [0, 2, 0, 0] },
+    },
+    footer: (page, pages) => ({
+      columns: [
+        { text: `${L.generated} ${sourceName}` },
+        { text: `${L.page} ${page} / ${pages}`, alignment: "right" },
+      ],
+      fontSize: 7, color: "#777777", margin: [40, 16, 40, 0],
+    }),
+    content,
+  });
+}
+
+const pdfToBlob = pdf => new Promise(resolve => pdf.getBlob(resolve));
+
+// ------------------------------------------------------------------------- //
+// UI
+// ------------------------------------------------------------------------- //
+
+const $ = id => document.getElementById(id);
+const results = []; // { filename, blob, url }
+
+const safeName = s => (s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "statement");
+const stem = name => name.replace(/\.[^.]+$/, "");
+
+function addRow(title, metaHtml, download) {
+  const li = document.createElement("li");
+  const info = document.createElement("div");
+  info.innerHTML = `<div class="name"></div><div class="meta">${metaHtml}</div>`;
+  info.querySelector(".name").textContent = title;
+  li.appendChild(info);
+  if (download) {
+    const a = document.createElement("a");
+    a.className = "btn"; a.href = download.url; a.download = download.filename; a.textContent = "Download PDF";
+    li.appendChild(a);
+  }
+  $("list").appendChild(li);
+  $("results").style.display = "block";
+}
+
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function handleFiles(files) {
+  const lang = $("lang").value, orientation = $("orientation").value, split = $("split").checked;
+  for (const file of files) {
+    let statements;
+    try {
+      statements = parseXml(await file.text());
+    } catch (err) {
+      addRow(file.name, `<span class="error">${esc(err.message)}</span>`);
+      continue;
+    }
+    const jobs = split
+      ? statements.map((s, i) => [[s], `${stem(file.name)}_${safeName(s.id || String(i + 1))}.pdf`])
+      : [[statements, `${stem(file.name)}.pdf`]];
+    for (const [stmts, filename] of jobs) {
+      const blob = await pdfToBlob(buildPdf(stmts, file.name, lang, orientation));
+      const url = URL.createObjectURL(blob);
+      results.push({ filename, blob, url });
+      const nEntries = stmts.reduce((a, s) => a + s.entries.length, 0);
+      const checks = stmts.map(reconcile).filter(r => r.checked);
+      const check = !checks.length ? "" : checks.every(r => r.ok)
+        ? ' · <span class="ok">saldo klopt</span>'
+        : ' · <span class="warn">saldo wijkt af</span>';
+      addRow(filename, `${esc(stmts.map(s => s.iban).filter(Boolean).join(", "))} · ` +
+             `${stmts.length} afschrift(en), ${nEntries} transacties${check}`, { url, filename });
+    }
+  }
+}
+
+$("drop").addEventListener("click", () => $("file").click());
+$("drop").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", e => { handleFiles(Array.from(e.target.files)); e.target.value = ""; });
+["dragenter", "dragover"].forEach(t => $("drop").addEventListener(t, e => { e.preventDefault(); $("drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(t => $("drop").addEventListener(t, e => { e.preventDefault(); $("drop").classList.remove("over"); }));
+$("drop").addEventListener("drop", e => handleFiles(Array.from(e.dataTransfer.files)));
+
+$("zip").addEventListener("click", async () => {
+  const zip = new JSZip();
+  const seen = {};
+  for (const r of results) {
+    let name = r.filename;
+    if (seen[name]) name = `${stem(name)}_${seen[name]}.pdf`;
+    seen[r.filename] = (seen[r.filename] || 0) + 1;
+    zip.file(name, r.blob);
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "afschriften.zip"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+});
+
+$("clear").addEventListener("click", () => {
+  results.splice(0).forEach(r => URL.revokeObjectURL(r.url));
+  $("list").innerHTML = "";
+  $("results").style.display = "none";
+});
+</script>
+</body>
+</html>
