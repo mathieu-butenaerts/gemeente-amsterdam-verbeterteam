@@ -1,23 +1,44 @@
-name: Deploy to GitHub Pages
+name: Test and deploy to GitHub Pages
 
 on:
   push:
     branches: [main]
-    paths: ["docs/**", ".github/workflows/pages.yml"]
+    paths: ["docs/**", "tests/**", "samples/**", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["docs/**", "tests/**", "samples/**", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays: look for newly published vulnerabilities
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Vendored libraries match pins, npm source and SRI; no known CVEs
+        run: python tests/check_vendor.py --source --osv
+      - name: Install Playwright (uses the runner's Chrome, no browser download)
+        run: pip install -r tests/requirements.txt
+      - name: Browser tests and page checks
+        run: python tests/run_tests.py --channel chrome
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

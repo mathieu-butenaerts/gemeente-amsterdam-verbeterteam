@@ -1,0 +1,29 @@
+[
+  {
+    "file": "pdfmake.min.js",
+    "package": "pdfmake",
+    "version": "0.2.23",
+    "source": "https://registry.npmjs.org/pdfmake/-/pdfmake-0.2.23.tgz",
+    "path_in_package": "build/pdfmake.min.js",
+    "license": "LICENSE-pdfmake.txt",
+    "sha256": "4410187c36ed6dd8cbfbaeea5b6fab6244238b3479c6de1cfe125d2c61fc2ba0"
+  },
+  {
+    "file": "vfs_fonts.js",
+    "package": "pdfmake",
+    "version": "0.2.23",
+    "source": "https://registry.npmjs.org/pdfmake/-/pdfmake-0.2.23.tgz",
+    "path_in_package": "build/vfs_fonts.js",
+    "license": "LICENSE-pdfmake.txt",
+    "sha256": "23e7c970fa9e75d296ea565939502a69ab2184cf40756c7d4670b6dabf470b58"
+  },
+  {
+    "file": "jszip.min.js",
+    "package": "jszip",
+    "version": "3.10.2",
+    "source": "https://registry.npmjs.org/jszip/-/jszip-3.10.2.tgz",
+    "path_in_package": "dist/jszip.min.js",
+    "license": "LICENSE-jszip.md",
+    "sha256": "7f839b2d4688b845c105ebf5d2f9803075f91ea0fe72bdaac176c3a04dd3d2c1"
+  }
+]

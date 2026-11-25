@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<!-- Same policy as docs/index.html, except that the tests may fetch the sample files. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'">
+<title>camt.053 naar PDF – tests</title>
+<link rel="icon" href="data:,">
+</head>
+<body>
+<pre id="result" data-status="running">running…</pre>
+<script src="../docs/vendor/pdfmake.min.js"></script>
+<script src="../docs/vendor/vfs_fonts.js"></script>
+<script src="../docs/vendor/jszip.min.js"></script>
+<script src="../docs/camt.js"></script>
+<script src="test.js"></script>
+</body>
+</html>
