@@ -44,15 +44,34 @@ CSP_RECORDER = """
 """
 
 
+# For malformed XML, Chrome's DOMParser builds an error document with a styled
+# <parsererror style="..."> element. The CSP blocks that inline style, and newer
+# Chrome versions report it against the parseFromString call in camt.js. That is
+# the policy working, not a problem. camt.js never writes styles itself, so a
+# style violation attributed to it can only be this.
+def is_parsererror_style(source: str, text: str = "") -> bool:
+    return (source or "").endswith("/docs/camt.js") and (not text or text.startswith("Applying inline style"))
+
+
 def watch(page, problems: list[str], label: str) -> None:
     def on_console(m):
         if m.type == "error":
             loc = m.location
+            if is_parsererror_style(loc.get("url"), m.text):
+                return
             problems.append(f"[{label}] console error at {loc.get('url')}:{loc.get('lineNumber')}: {m.text}")
 
     page.on("console", on_console)
     page.on("pageerror", lambda e: problems.append(f"[{label}] page error: {e}"))
     page.add_init_script(CSP_RECORDER)
+
+
+def unexpected(violations: list[dict]) -> list[dict]:
+    expected = [v for v in violations
+                if v["directive"].startswith("style-src") and is_parsererror_style(v["source"])]
+    if expected:
+        print(f"ok   {len(expected)} blocked parsererror style(s) from malformed-XML tests (expected)")
+    return [v for v in violations if v not in expected]
 
 
 def describe(violations: list[dict]) -> str:
@@ -68,7 +87,7 @@ def unit_tests(page, base: str) -> list[str]:
     print(page.inner_text("#result"))
     if page.get_attribute("#result", "data-status") != "pass":
         problems.append("unit tests failed")
-    violations = page.evaluate("() => window.__csp")
+    violations = unexpected(page.evaluate("() => window.__csp"))
     if violations:
         problems.append(f"[unit] CSP violations: {describe(violations)}")
     return problems
@@ -97,7 +116,7 @@ def page_tests(page, base: str) -> list[str]:
     if page.locator("#list a.btn").count() != 3:
         problems.append("expected 3 download buttons")
 
-    violations = page.evaluate("() => window.__csp")
+    violations = unexpected(page.evaluate("() => window.__csp"))
     if violations:
         problems.append(f"[page] CSP violations during normal use: {describe(violations)}")
     else:
