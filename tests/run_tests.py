@@ -34,30 +34,49 @@ def serve() -> tuple[http.server.ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def watch(page, problems: list[str]) -> None:
-    page.on("console", lambda m: m.type == "error" and problems.append(f"console error: {m.text}"))
-    page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+# Records every CSP violation the page reports, with where it came from.
+CSP_RECORDER = """
+    window.__csp = [];
+    document.addEventListener('securitypolicyviolation', e => window.__csp.push({
+        directive: e.violatedDirective, blocked: e.blockedURI, source: e.sourceFile,
+        line: e.lineNumber, sample: e.sample,
+    }));
+"""
+
+
+def watch(page, problems: list[str], label: str) -> None:
+    def on_console(m):
+        if m.type == "error":
+            loc = m.location
+            problems.append(f"[{label}] console error at {loc.get('url')}:{loc.get('lineNumber')}: {m.text}")
+
+    page.on("console", on_console)
+    page.on("pageerror", lambda e: problems.append(f"[{label}] page error: {e}"))
+    page.add_init_script(CSP_RECORDER)
+
+
+def describe(violations: list[dict]) -> str:
+    return "; ".join(f"{v['directive']} blocked {v['blocked'] or '-'} from {v['source'] or '?'}:{v['line']} "
+                     f"sample={v['sample']!r}" for v in violations)
 
 
 def unit_tests(page, base: str) -> list[str]:
     problems: list[str] = []
-    watch(page, problems)
+    watch(page, problems, "unit")
     page.goto(f"{base}/tests/test.html")
     page.wait_for_function("() => document.getElementById('result').dataset.status !== 'running'", timeout=120_000)
     print(page.inner_text("#result"))
     if page.get_attribute("#result", "data-status") != "pass":
         problems.append("unit tests failed")
+    violations = page.evaluate("() => window.__csp")
+    if violations:
+        problems.append(f"[unit] CSP violations: {describe(violations)}")
     return problems
 
 
 def page_tests(page, base: str) -> list[str]:
     problems: list[str] = []
-    watch(page, problems)
-    page.add_init_script("""
-        window.__csp = [];
-        document.addEventListener('securitypolicyviolation',
-            e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));
-    """)
+    watch(page, problems, "page")
     page.goto(f"{base}/docs/index.html")
 
     files = ["example_v02.xml", "example_v08_mismatch.xml", "example_no_balances.xml", "invalid_amount.xml"]
@@ -80,7 +99,7 @@ def page_tests(page, base: str) -> list[str]:
 
     violations = page.evaluate("() => window.__csp")
     if violations:
-        problems.append(f"CSP violations during normal use: {violations}")
+        problems.append(f"[page] CSP violations during normal use: {describe(violations)}")
     else:
         print("ok   page runs without CSP violations")
 
@@ -94,7 +113,7 @@ def page_tests(page, base: str) -> list[str]:
         out.violations = window.__csp.slice();
         return out;
     }""")
-    directives = " ".join(blocked["violations"])
+    directives = " ".join(v["directive"] for v in blocked["violations"])
     for what, ok in [("fetch", blocked["fetch"] == "blocked"),
                      ("connect-src", "connect-src" in directives),
                      ("img-src", "img-src" in directives)]:
